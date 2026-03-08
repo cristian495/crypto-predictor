@@ -1,0 +1,27 @@
+# Optimized parameters (specific to each user's runs)
+optimized_params_*.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Charts and outputs
+*.png
+equity_*.png
+
+# Data cache
+*.csv
+*.pkl
+
+# Model files
+*.model
+*.pkl
+
+# Optuna database
+optuna.db

@@ -1,0 +1,6 @@
+_pycache_/
+venv/
+catboost_info/
+*.pkl
+*.pyc
+*.png
