@@ -38,3 +38,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Secrets & Config
+monitor_config.json
+.env

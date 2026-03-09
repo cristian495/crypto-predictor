@@ -5,7 +5,7 @@ Optimized for trending assets like BNB, ETH, BTC.
 """
 
 # ── Data ─────────────────────────────────────────────────────
-TIMEFRAME = "1h"  # Options: "1h", "4h" (ChatGPT recommends 4h for ETH)
+TIMEFRAME = "4h"  # 4h filters noise better than 1h for trend following
 DAYS = 1095       # History to download (3 years)
 DEFAULT_SYMBOLS = [
     "POL/USDT",
@@ -30,14 +30,14 @@ EMA_TREND = 200                     # Long-term trend filter
 
 # Breakout settings
 BREAKOUT_PERIOD = 20                # Lookback for highs/lows
-VOLUME_THRESHOLD = 1.3              # Min volume multiplier for valid breakout
+VOLUME_THRESHOLD = 1.1              # Min volume multiplier for valid breakout (relaxed)
 
-# Momentum filters
-ADX_MIN = 20.0                      # Min ADX for trend strength (moderate to strong trends)
-RSI_LONG_MIN = 45.0                 # LONG only when RSI > 45 (avoid weak momentum)
-RSI_LONG_MAX = 75.0                 # LONG only when RSI < 75 (avoid extreme overbought)
-RSI_SHORT_MIN = 25.0                # SHORT only when RSI > 25 (avoid extreme oversold)
-RSI_SHORT_MAX = 55.0                # SHORT only when RSI < 55 (avoid weak momentum)
+# Momentum filters (4h timeframe = less noise, can be stricter)
+ADX_MIN = 20.0                      # Min ADX for trend strength
+RSI_LONG_MIN = 45.0                 # LONG only when RSI > 45
+RSI_LONG_MAX = 75.0                 # LONG only when RSI < 75
+RSI_SHORT_MIN = 25.0                # SHORT only when RSI > 25
+RSI_SHORT_MAX = 55.0                # SHORT only when RSI < 55
 
 # ATR-based volatility filter
 ATR_MIN_PERCENTILE = 0.20           # Only trade when ATR > 20th percentile (avoid low vol)
@@ -49,7 +49,7 @@ TAKE_PROFIT_RR = 1.8            # Cambiar de 2.5
 TRAILING_STOP_ATR_MULT = 2.5    # Cambiar de 3.0
 USE_TRAILING_STOP = True            # Enable trailing stops for trend following
 
-HOLD_TIMEOUT = 72                   # Max candles to hold (72h at 1h, 12 days at 4h)
+HOLD_TIMEOUT = 18                   # Max candles to hold (18 x 4h = 72h = 3 days)
 TARGET_SL_ATR_MULT = 2.5            # ATR multiplier for ML target labeling
                                     # (slightly wider than trading SL)
 

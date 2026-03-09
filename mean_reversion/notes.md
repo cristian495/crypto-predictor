@@ -85,7 +85,10 @@ ADX > 50  → Tendencia muy fuerte ✅✅
 
 ## ATR (Average True Range) - Stops Dinámicos
 - Mide la volatilidad del activo
+- mide cuánto se mueve el precio en promedio por vela.
 - Usado para stops que se adaptan a las condiciones del mercado
+- 5 mercado tranquilo
+- 20 mercado muy volatil
 
  ## Trailing Stops 
  - SL que "siguen" al precio cuando va a favor
@@ -93,3 +96,31 @@ ADX > 50  → Tendencia muy fuerte ✅✅
 ## DI+ y DI- (Directional Indicators)
 - DI+ = Fuerza del movimiento alcista
 - DI- = Fuerza del movimiento bajista
+
+
+## ATR Expansion
+- el mercado está pasando de calma → movimiento fuerte
+
+## Percentile
+- va de 1 a 100
+- indica la posición de un valor dentro de una distribución.
+
+## ATR max percentile
+- limite de volatilidad permitido
+Ejem
+MAX = 90
+HISTORIAL ATR = 10 11 12 13 14 15 16 17 20 25 30
+ACTUAL ATR = 25 => ubicacion 90 del percentile
+=>  ya se llego al maximo de volatilidad (evitar trades)
+
+
+## Volume surge breakout
+- tecnica para detectar que se rompio un limite usando el volumen como referencia
+SURGE_VOLUME_MIN = current_volume / volume_mean
+SURGE_VOLUME_ZSCORE_MIN = indica cuantas desviaciones estandar esta por encima de su media
+
+
+breakout + volume
+btc correlation
+volatility breakout
+
