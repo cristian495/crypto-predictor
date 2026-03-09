@@ -149,18 +149,6 @@ def check_strategy_signals(strategy_name: str, config: dict) -> list:
                 print(f"  {sig['symbol']:<12} {sig['signal']:<8} prob={sig['prob']:.3f}")
         else:
             print("  No signals found")
-            # Debug: show CURRENT SIGNALS section
-            print("\n  [DEBUG] CURRENT SIGNALS section:")
-            in_section = False
-            for line in result.stdout.splitlines():
-                if "CURRENT SIGNALS" in line:
-                    in_section = True
-                    print(f"    {line}")
-                    continue
-                if in_section:
-                    if line.strip().startswith("["):
-                        break
-                    print(f"    {line}")
 
         return signals
 
