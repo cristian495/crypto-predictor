@@ -144,10 +144,10 @@ Antes de usar dinero real:
 📋 TODO List Actualizado
 Quieres que implemente esto en orden de prioridad?
 
-[CRÍTICO] ADX + Regime Filter
-[ALTO] VWAP Distance feature
-[ALTO] Sistema de Scoring (0-100)
-[ALTO] Bollinger Distance mejorado
+[CRÍTICO] ADX + Regime Filter x
+[ALTO] VWAP Distance feature x
+[ALTO] Sistema de Scoring (0-100) x
+[ALTO] Bollinger Distance mejorado x
 [MEDIO] Wick ratios
 [MEDIO] Walk-forward validation
 [BAJO] Optimización per-symbol con Optuna
