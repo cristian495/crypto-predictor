@@ -28,16 +28,16 @@ import yaml
 STRATEGIES = {
     "mean_reversion": {
         "path": "mean_reversion",
-        "symbols": [ "XRP/USDT"],
+        "symbols": ["ETH/USDT", "DOGE/USDT", "LINK/USDT", "XRP/USDT"],
         "description": "Mean Reversion (Z-score extremes)",
         "optimize": False,  # No optimization needed
     },
-    # "breakout_momentum": {
-    #     "path": "breakout_momentum",
-    #     "symbols": ["ETH/USDT", "BNB/USDT"],
-    #     "description": "Breakout Momentum (Volatility + Volume)",
-    #     "optimize": True  # Requires --optimize flag
-    # },
+    "breakout_momentum": {
+        "path": "breakout_momentum",
+        "symbols": ["ETH/USDT", "BNB/USDT"],
+        "description": "Breakout Momentum (Volatility + Volume)",
+        "optimize": True  # Requires --optimize flag
+    },
     # trend_following requires 4h timeframe, slower signals
     # "trend_following": {
     #     "path": "trend_following",
@@ -295,20 +295,19 @@ def run_monitor(webhook_url: str = None, config_file: str = None):
     for strategy_name, strategy_config in STRATEGIES.items():
         try:
             signals = check_strategy_signals(strategy_name, strategy_config)
-            rejected_signals = []
 
             # Apply filters to signals from this strategy
             if signals and filter_pipeline:
                 print(f"\nApplying filters to {len(signals)} signal(s) from {strategy_name}...")
                 original_count = len(signals)
-                signals, rejected_signals = filter_pipeline.filter_signals(signals)
+                signals = filter_pipeline.filter_signals(signals)
                 filtered_count = len(signals)
                 print(f"  Result: {filtered_count}/{original_count} signal(s) passed filters")
 
             # Send notification for this strategy (always, regardless of signals)
             if webhook_url:
                 if signals:
-                    # Send approved signals notification
+                    # Send signals notification
                     message = format_signal_summary(signals)
                     send_discord_notification(webhook_url, message, color=0x00ff00)
                     print(f"✅ Sent Discord notification for {len(signals)} signal(s)")
@@ -318,12 +317,6 @@ def run_monitor(webhook_url: str = None, config_file: str = None):
                     message = f"**{desc}**\nNo signals found"
                     send_discord_notification(webhook_url, message, color=0x808080)
                     print(f"✅ Sent Discord notification: No signals")
-
-                # Send rejected signals notification if any
-                if rejected_signals:
-                    message = format_rejected_signals_summary(rejected_signals, strategy_config)
-                    send_discord_notification(webhook_url, message, color=0xFFA500)  # Orange
-                    print(f"⚠️  Sent Discord notification for {len(rejected_signals)} rejected signal(s)")
 
             all_signals.extend(signals)
         except Exception as e:
@@ -374,31 +367,6 @@ def format_signal_summary(signals: list) -> str:
             )
 
         lines.append("")  # Blank line between strategies
-
-    return "\n".join(lines)
-
-
-def format_rejected_signals_summary(rejected_signals: list, strategy_config: dict) -> str:
-    """
-    Format rejected signals into Discord markdown message.
-
-    Example:
-        **⚠️ Mean Reversion - Filtered Signals**
-        🚫 XRP/USDT SHORT (prob=0.65)
-        Reason: Low liquidity: volume 11.5% of 30d average (min 50.0%)
-    """
-    desc = strategy_config.get("description", "Strategy")
-    lines = [f"**⚠️ {desc} - Filtered Signals**"]
-
-    for sig in rejected_signals:
-        emoji = "🟢" if sig["signal"] == "LONG" else "🔴"
-        lines.append(
-            f"🚫 {emoji} {sig['symbol']} **{sig['signal']}** "
-            f"(prob={sig['prob']:.2f}, {sig['extra']})"
-        )
-        # Add rejection reason on next line with indent
-        reason = sig.get('rejection_reason', 'Unknown reason')
-        lines.append(f"   └ *{reason}*")
 
     return "\n".join(lines)
 
