@@ -52,7 +52,7 @@ Take profit: +4%
 - Distancia de la media
 - Indica desviaciones estándar arriba o abajo de la media.
 Ejemplo de interpretación:
-Z > +2 Precio muy algo posible caida
+Z > +2 Precio muy alto posible caida
 Z < -2 Precio muy bajo posible subida
 
 ## Sharpe
@@ -74,7 +74,9 @@ Ganancias inconsistentes -> Sharpe bajo
 
 ## RSI Relative Strength Index (Mean Reversion)
 - Mide la fuerza de una tendencia
-- RSI < 45 -> sobrevendido (posible subida)
+- va de 0 a 100
+- RSI < 45 -> la gente ha sobrevendido (posible subida)
+- RSI > 70 -> la gente ha sobrecomprado (posible bajada)
 
 ## ADX Average Directional Index (Trend Following)
 - Mide la fuerza de una tendencia 0 - 100
@@ -84,7 +86,8 @@ ADX 25-50 → Tendencia fuerte ✅
 ADX > 50  → Tendencia muy fuerte ✅✅
 
 ## ATR (Average True Range) - Stops Dinámicos
-- Mide la volatilidad del activo
+- Mide la volatilidad del activo entre un minimo y maximo
+- parecido a desviacio estandar pero con rangos
 - mide cuánto se mueve el precio en promedio por vela.
 - Usado para stops que se adaptan a las condiciones del mercado
 - 5 mercado tranquilo
@@ -119,6 +122,8 @@ ACTUAL ATR = 25 => ubicacion 90 del percentile
 SURGE_VOLUME_MIN = current_volume / volume_mean
 SURGE_VOLUME_ZSCORE_MIN = indica cuantas desviaciones estandar esta por encima de su media
 
+## Donchian
+- mide los extremos del precio (techo y suelo)
 
 breakout + volume
 btc correlation

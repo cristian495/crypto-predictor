@@ -1,0 +1,88 @@
+# ══════════════════════════════════════════════════════════════════
+# FILTER CONFIGURATION
+# ══════════════════════════════════════════════════════════════════
+# Signal filtering system for post-processing trading signals.
+# Filters run AFTER the ML model generates signals.
+#
+# Philosophy:
+#   - Filters should PROTECT (veto bad trades), not PREDICT (replace model)
+#   - Start conservative: only enable safety filters (volatility, liquidity)
+#   - Add complexity only if backtest/live data shows improvement
+#   - Fail open: if filter errors, approve the signal
+# ══════════════════════════════════════════════════════════════════
+
+filters:
+  # ──────────────────────────────────────────────────────────────
+  # LIQUIDITY FILTER
+  # ──────────────────────────────────────────────────────────────
+  # Vetos trades when 24h volume is too low compared to 30-day average.
+  #
+  # Why: Low liquidity = high slippage, easier manipulation, thin books
+  # When it helps: Protects from entering illiquid conditions
+  # When it hurts: May skip valid signals in temporary low-volume periods
+  #
+  # Recommended: ENABLED for all strategies
+  # ──────────────────────────────────────────────────────────────
+  liquidity:
+    enabled: true
+    min_volume_ratio: 0.2     # Minimum: 20% of 30-day average volume
+    lookback_days: 30         # Calculate average over last 30 days
+
+  # ──────────────────────────────────────────────────────────────
+  # VOLATILITY FILTER
+  # ──────────────────────────────────────────────────────────────
+  # Vetos trades when realized volatility is extremely high.
+  #
+  # Why: High volatility = model trained on normal conditions won't apply
+  #      Stop losses can be jumped, slippage increases
+  # When it helps: Protects during flash crashes, extreme news events
+  # When it hurts: May skip breakout opportunities in trending markets
+  #
+  # Recommended: ENABLED, especially for mean reversion
+  # ──────────────────────────────────────────────────────────────
+  volatility:
+    enabled: true
+    max_volatility: 0.10      # Maximum: 10% realized volatility (24h)
+    lookback_hours: 24        # Calculate volatility over last 24 hours
+
+  # ──────────────────────────────────────────────────────────────
+  # FUTURE FILTERS (disabled by default)
+  # ──────────────────────────────────────────────────────────────
+  # Uncomment and configure to enable additional filters
+
+  # btc_correlation:
+  #   enabled: false
+  #   min_correlation: 0.3    # Veto if correlation with BTC < 30%
+  #   lookback_days: 30
+
+  # ai_sentiment:
+  #   enabled: false
+  #   anthropic_api_key: ""   # Or use ANTHROPIC_API_KEY env var
+  #   model: "claude-3-haiku-20240307"
+  #   veto_only: true         # Only veto, don't adjust confidence
+  #   check_breaking_news: true
+  #   check_regulatory_events: true
+
+# ══════════════════════════════════════════════════════════════════
+# USAGE NOTES
+# ══════════════════════════════════════════════════════════════════
+#
+# 1. Test changes incrementally:
+#    - Enable one filter at a time
+#    - Compare results before/after
+#    - Measure impact on Sharpe ratio and win rate
+#
+# 2. Monitor false positives:
+#    - Check logs for "❌ Filtered out" messages
+#    - Were these actually bad trades? Or good opportunities missed?
+#
+# 3. Tune parameters based on data:
+#    - Too many filters? Reduce opportunities → higher variance
+#    - Too few filters? More losses in extreme conditions
+#
+# 4. Recommended workflow:
+#    Week 1: Enable liquidity + volatility
+#    Week 2-4: Monitor results, adjust thresholds
+#    Month 2+: Consider adding AI/correlation filters if needed
+#
+# ══════════════════════════════════════════════════════════════════
