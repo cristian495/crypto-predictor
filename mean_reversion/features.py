@@ -47,6 +47,47 @@ def compute_stochastic(df: pd.DataFrame, period: int = 14,
     return slow_k, slow_d
 
 
+def compute_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """
+    Average Directional Index (ADX).
+    Measures trend strength (0-100).
+    ADX < 20: weak/no trend (good for mean reversion)
+    ADX 20-25: developing trend
+    ADX > 25: strong trend (avoid mean reversion)
+    ADX > 50: very strong trend
+    """
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
+
+    # Calculate +DM and -DM
+    high_diff = high.diff()
+    low_diff = -low.diff()
+
+    plus_dm = pd.Series(0.0, index=df.index)
+    minus_dm = pd.Series(0.0, index=df.index)
+
+    plus_dm[(high_diff > low_diff) & (high_diff > 0)] = high_diff
+    minus_dm[(low_diff > high_diff) & (low_diff > 0)] = low_diff
+
+    # Calculate ATR
+    atr = compute_atr(df, period)
+
+    # Smooth DM
+    plus_dm_smooth = plus_dm.ewm(alpha=1/period, min_periods=period).mean()
+    minus_dm_smooth = minus_dm.ewm(alpha=1/period, min_periods=period).mean()
+
+    # Calculate DI+ and DI-
+    plus_di = 100 * plus_dm_smooth / atr
+    minus_di = 100 * minus_dm_smooth / atr
+
+    # Calculate DX and ADX
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+    adx = dx.ewm(alpha=1/period, min_periods=period).mean()
+
+    return adx
+
+
 def compute_hurst(series: pd.Series, window: int = 100) -> pd.Series:
     """
     Rolling Hurst exponent using rescaled range (R/S) method.
@@ -203,6 +244,30 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     # Hurst exponent (rolling)
     df["hurst"] = compute_hurst(df["close"], window=100)
 
+    # ADX (trend strength) — CRITICAL for mean reversion
+    df["adx_14"] = compute_adx(df, period=14)
+
+    # Market regime classifier (0 = ranging, 1 = trending)
+    # Mean reversion works best in ranging markets (ADX < 25)
+    df["market_regime"] = (df["adx_14"] > 25).astype(int)
+
+    # VWAP and distance
+    # VWAP = volume-weighted average price (fair price)
+    cumulative_vwap = (df["volume"] * (df["high"] + df["low"] + df["close"]) / 3).cumsum()
+    cumulative_volume = df["volume"].cumsum()
+    df["vwap"] = cumulative_vwap / cumulative_volume
+
+    # Distance from VWAP (normalized)
+    df["vwap_distance"] = (df["close"] - df["vwap"]) / df["vwap"]
+
+    # Bollinger band distances (in addition to percent_b)
+    bb_mid = df["close"].rolling(20).mean()
+    bb_std = df["close"].rolling(20).std()
+    bb_upper = bb_mid + 2 * bb_std
+    bb_lower = bb_mid - 2 * bb_std
+    df["bb_upper_dist"] = (bb_upper - df["close"]) / df["close"]
+    df["bb_lower_dist"] = (df["close"] - bb_lower) / df["close"]
+
     # ── Derivatives data (if available) ──────────────────────
 
     if "funding_rate" in df.columns:
@@ -256,6 +321,12 @@ FEATURE_COLS = [
     "rsi_extreme",
     "zscore_volume",
     "hurst",
+    # NEW: Regime and VWAP features
+    "adx_14",
+    "market_regime",
+    "vwap_distance",
+    "bb_upper_dist",
+    "bb_lower_dist",
     # Derivatives
     "funding_rate_feat",
     "oi_change",

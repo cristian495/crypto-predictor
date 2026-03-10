@@ -51,6 +51,19 @@ INITIAL_CAPITAL = 10_000.0
 HURST_FILTER = False               # disabled — Z>2.0 + RSI filter is enough
 RSI_LONG_MAX = 45.0                # LONG only when RSI < 45 (confirmed oversold)
 RSI_SHORT_MIN = 55.0               # SHORT only when RSI > 55 (confirmed overbought)
+ADX_MAX_THRESHOLD = 40.0           # Max ADX for mean reversion entry (40 = very strong trend)
+                                   # Note: crypto markets trend more than traditional markets
+                                   # 25 is too restrictive (blocks 50%+ of opportunities)
+                                   # 40 blocks only the strongest trends
+
+# ── Scoring System ───────────────────────────────────────────
+USE_SCORING_SYSTEM = False         # If True, use 0-100 scoring instead of binary votes
+                                   # NOTE: Scoring system is implemented but performs worse than
+                                   # legacy voting system (42% WR vs 62% WR). Leave disabled.
+                                   # The real improvements come from ADX/VWAP features, not scoring.
+MIN_SCORE_THRESHOLD = 50.0         # Minimum score (0-100) to enter trade
+                                   # 70 was too high (0 trades)
+                                   # 50 is balanced for crypto volatility
 
 # ── Trading Mode ─────────────────────────────────────────────
 LONG_ONLY = False                   # True = spot (LONG only), False = futures (LONG+SHORT)
