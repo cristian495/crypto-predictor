@@ -17,6 +17,7 @@ import sys
 import json
 import argparse
 import subprocess
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 import requests
@@ -37,6 +38,11 @@ STRATEGIES = {
         "symbols": ["ETH/USDT", "BNB/USDT"],
         "description": "Breakout Momentum (Volatility + Volume)",
         "optimize": True  # Requires --optimize flag
+    },
+    "buy_the_dip": {
+        "path": "buy_the_dip",
+        # "symbols": ["ETH/USDT", "BNB/USDT"],
+        "description": "Buy the Dip",
     },
     # trend_following requires 4h timeframe, slower signals
     # "trend_following": {
@@ -93,18 +99,19 @@ def send_error_notification(webhook_url: str, strategy: str, error: str):
 # ── Signal Detection ─────────────────────────────────────────────────
 def check_strategy_signals(strategy_name: str, config: dict) -> list:
     """
-    Run a strategy and parse signals from stdout.
+    Run a strategy and parse signals from JSON output.
 
     Returns:
         List of dicts with signal info: [{"symbol": "ETH/USDT", "signal": "LONG", "prob": 0.75, ...}]
     """
     strategy_path = Path(config["path"])
-    symbols = config["symbols"]
+    symbols = config.get("symbols") or []
     optimize = config.get("optimize", False)
 
     print(f"\n{'=' * 70}")
     print(f"Checking {strategy_name} ({config['description']})")
-    print(f"Symbols: {', '.join(symbols)}")
+    if symbols:
+        print(f"Symbols: {', '.join(symbols)}")
     if optimize:
         print(f"Optimize: enabled (finding best buy_threshold)")
     print(f"{'=' * 70}")
@@ -113,10 +120,10 @@ def check_strategy_signals(strategy_name: str, config: dict) -> list:
     cmd = [
         sys.executable,
         "main.py",
-        "--symbols",
-        *symbols,
         "--scan"
     ]
+    if symbols:
+        cmd.extend(["--symbols", *symbols])
 
     # Add --optimize flag if needed
     if optimize:
@@ -128,21 +135,28 @@ def check_strategy_signals(strategy_name: str, config: dict) -> list:
         cmd.extend(["--buy-threshold", str(test_threshold)])
 
     try:
-        result = subprocess.run(
-            cmd,
-            cwd=strategy_path,
-            capture_output=True,
-            text=True,
-            timeout=600  # 10 min max
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            signals_path = Path(tmpdir) / f"{strategy_name}_signals.json"
+            cmd_with_json = cmd + ["--signals-json", str(signals_path)]
 
-        if result.returncode != 0:
-            print(f"❌ Strategy failed with code {result.returncode}")
-            print(f"stderr: {result.stderr[:500]}")
-            return []
+            result = subprocess.run(
+                cmd_with_json,
+                cwd=strategy_path,
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 min max
+            )
 
-        # Parse signals from output
-        signals = parse_signals(result.stdout, strategy_name)
+            if result.returncode != 0:
+                print(f"❌ Strategy failed with code {result.returncode}")
+                print(f"stderr: {result.stderr[:500]}")
+                return []
+
+            if not signals_path.exists():
+                print("❌ Strategy did not generate signals JSON")
+                return []
+
+            signals = parse_signals_json(signals_path, strategy_name)
 
         if signals:
             print(f"✅ Found {len(signals)} signal(s)")
@@ -161,75 +175,40 @@ def check_strategy_signals(strategy_name: str, config: dict) -> list:
         return []
 
 
-def parse_signals(stdout: str, strategy: str) -> list:
+def parse_signals_json(path: Path, strategy: str) -> list:
     """
-    Parse trading signals from main.py stdout.
+    Parse trading signals from a JSON file produced by strategy main.py.
 
-    Expected format (in CURRENT SIGNALS section):
-      ETH/USDT    LONG     prob=0.7234 agree=3/3 Z=-2.89
-      BTC/USDT    NO TRADE  Z=0.45
-
-    Returns:
-        [{"symbol": "ETH/USDT", "signal": "LONG", "prob": 0.72, "extra": "agree=3/3 Z=-2.89"}]
+    Accepts either:
+      - {"signals": [...]} or
+      - [...] (list of signals)
     """
-    signals = []
-    in_signals_section = False
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"⚠️  Failed to read signals JSON: {e}")
+        return []
 
-    for line in stdout.splitlines():
-        line_stripped = line.strip()
+    if isinstance(data, dict):
+        signals = data.get("signals", [])
+    elif isinstance(data, list):
+        signals = data
+    else:
+        return []
 
-        # Detect start of CURRENT SIGNALS section
-        if "CURRENT SIGNALS" in line:
-            in_signals_section = True
+    # Normalize and ensure strategy field
+    normalized = []
+    for sig in signals:
+        if not isinstance(sig, dict):
             continue
-
-        # Detect end of CURRENT SIGNALS section (next section starts with "[")
-        if in_signals_section and line_stripped.startswith("["):
-            break
-
-        # Only parse lines within CURRENT SIGNALS section
-        if not in_signals_section:
+        if sig.get("signal") not in ["LONG", "SHORT"]:
             continue
+        sig = sig.copy()
+        sig.setdefault("strategy", strategy)
+        normalized.append(sig)
 
-        # Skip empty lines and separator lines (but not signal lines that contain "prob=")
-        if not line_stripped:
-            continue
-        if "=" in line_stripped and "prob=" not in line_stripped:
-            continue
-
-        # Parse signal line: "  ETH/USDT    LONG     prob=0.7234 agree=3/3 Z=-2.89"
-        parts = line_stripped.split()
-        if len(parts) < 2:
-            continue
-
-        symbol = parts[0]
-        signal_type = parts[1]
-
-        # Only keep LONG/SHORT signals (skip NO TRADE)
-        if signal_type not in ["LONG", "SHORT"]:
-            continue
-
-        # Extract probability
-        prob = 0.0
-        extra_info = []
-        for part in parts[2:]:
-            if part.startswith("prob="):
-                try:
-                    prob = float(part.split("=")[1])
-                except ValueError:
-                    pass
-            else:
-                extra_info.append(part)
-
-        signals.append({
-            "symbol": symbol,
-            "signal": signal_type,
-            "prob": prob,
-            "extra": " ".join(extra_info),
-            "strategy": strategy
-        })
-
-    return signals
+    return normalized
 
 
 # ── Load Filter Configuration ────────────────────────────────────────
@@ -300,7 +279,11 @@ def run_monitor(webhook_url: str = None, config_file: str = None):
             if signals and filter_pipeline:
                 print(f"\nApplying filters to {len(signals)} signal(s) from {strategy_name}...")
                 original_count = len(signals)
-                signals = filter_pipeline.filter_signals(signals)
+                filtered = filter_pipeline.filter_signals(signals)
+                if isinstance(filtered, tuple):
+                    signals, _rejected = filtered
+                else:
+                    signals = filtered
                 filtered_count = len(signals)
                 print(f"  Result: {filtered_count}/{original_count} signal(s) passed filters")
 

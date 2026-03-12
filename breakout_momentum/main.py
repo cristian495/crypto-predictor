@@ -12,6 +12,9 @@ Usage:
 """
 
 import argparse
+import json
+from datetime import datetime, timezone
+from pathlib import Path
 import numpy as np
 import pandas as pd
 
@@ -50,6 +53,8 @@ from backtest import (
     plot_equity_curve,
 )
 from metrics import print_performance_report
+
+STRATEGY_NAME = Path(__file__).resolve().parent.name
 
 
 # ── Single symbol mode ───────────────────────────────────────
@@ -205,6 +210,8 @@ def main_single(
     )
     print_current_signals(latest_signals, symbol)
 
+    current_payload = _build_signal_payload(latest_signals, symbol)
+
     # Summary
     m = bt["metrics"]
     print(f"\n{'=' * 70}")
@@ -220,7 +227,51 @@ def main_single(
     print(f"  Expectancy:    {m['expectancy']:.4%}")
     print(f"{'=' * 70}")
 
-    return {"metrics": bt["metrics"], "trades": bt["trades"], "val_auc": val_auc}
+    return {
+        "metrics": bt["metrics"],
+        "trades": bt["trades"],
+        "val_auc": val_auc,
+        "current_signal": current_payload,
+    }
+
+
+def _build_signal_payload(df: pd.DataFrame, symbol: str) -> dict | None:
+    """Build a structured signal dict for machine consumption."""
+    last = df.iloc[-1]
+    signal = last.get("signal", "NO TRADE")
+
+    if signal not in ["LONG", "SHORT"]:
+        return None
+
+    prob = float(last.get("probability", 0.0))
+    n_agree = int(last.get("n_agree", 0))
+    strategy_name = last.get("strategy_name", "UNKNOWN")
+    rsi = float(last.get("rsi_14", 0))
+    adx = float(last.get("adx", 0))
+    rel_vol = float(last.get("relative_volume", 0))
+
+    extra = (
+        f"{strategy_name} agree={n_agree}/3 "
+        f"RSI={rsi:.1f} ADX={adx:.1f} Vol={rel_vol:.2f}x"
+    )
+
+    return {
+        "symbol": symbol,
+        "signal": signal,
+        "prob": prob,
+        "extra": extra,
+    }
+
+
+def _write_signals_json(path: str, signals: list, strategy: str):
+    """Write signals in a standard JSON format."""
+    payload = {
+        "strategy": strategy,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "signals": signals,
+    }
+    with open(path, "w") as f:
+        json.dump(payload, f, ensure_ascii=True)
 
 
 # ── Multi-crypto scan mode ────────────────────────────────────
@@ -232,6 +283,7 @@ def main_scan(
     days: int = DAYS,
     optimize: bool = False,
     buy_threshold: float = BUY_THRESHOLD,
+    signals_json: str | None = None,
 ):
     """Multi-crypto pipeline: train, scan, backtest."""
 
@@ -353,6 +405,8 @@ def main_scan(
     print(f"  CURRENT SIGNALS — Breakout Momentum")
     print(f"{'=' * 80}")
 
+    signals_payload = []
+
     for symbol, data in trained.items():
         symbol_btc = btc_df if symbol not in ["BTC/USDT", "BTCUSDT"] else None
         latest_df = add_features(data["raw_df"], symbol=symbol, btc_df=symbol_btc)
@@ -363,6 +417,9 @@ def main_scan(
             min_agree=MIN_AGREE,
         )
         print_current_signals(latest_signals, symbol)
+        sig = _build_signal_payload(latest_signals, symbol)
+        if sig:
+            signals_payload.append(sig)
 
     print(f"{'=' * 80}")
 
@@ -406,6 +463,9 @@ def main_scan(
     print(f"  Expectancy:      {m['expectancy']:.4%}")
     print(f"{'=' * 70}")
 
+    if signals_json:
+        _write_signals_json(signals_json, signals_payload, STRATEGY_NAME)
+
     return {"trained": trained, "backtest": bt}
 
 
@@ -427,6 +487,8 @@ if __name__ == "__main__":
                         help="Symbols for scan mode")
     parser.add_argument("--buy-threshold", type=float, default=BUY_THRESHOLD,
                         help=f"Min probability for signal (default: {BUY_THRESHOLD})")
+    parser.add_argument("--signals-json", default=None,
+                        help="Write current signals to JSON file")
 
     args = parser.parse_args()
 
@@ -437,12 +499,20 @@ if __name__ == "__main__":
             days=args.days,
             optimize=args.optimize,
             buy_threshold=args.buy_threshold,
+            signals_json=args.signals_json,
         )
     else:
-        main_single(
+        result = main_single(
             symbol=args.symbol,
             timeframe=args.timeframe,
             days=args.days,
             optimize=args.optimize,
             buy_threshold=args.buy_threshold,
         )
+
+        if args.signals_json and result:
+            payload = []
+            current = result.get("current_signal")
+            if current:
+                payload.append(current)
+            _write_signals_json(args.signals_json, payload, STRATEGY_NAME)

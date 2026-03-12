@@ -129,3 +129,88 @@ breakout + volume
 btc correlation
 volatility breakout
 
+
+
+
+### IMPLEMENTAR
+Antes de usar dinero real:
+	•	walk forward test
+	•	monte carlo
+	•	slippage simulation
+	•	fee stress test
+	•	forward test en paper trading
+
+
+
+📋 TODO List Actualizado
+Quieres que implemente esto en orden de prioridad?
+
+[CRÍTICO] ADX + Regime Filter x
+[ALTO] VWAP Distance feature x
+[ALTO] Sistema de Scoring (0-100) x
+[ALTO] Bollinger Distance mejorado x
+[MEDIO] Wick ratios
+[MEDIO] Walk-forward validation
+[BAJO] Optimización per-symbol con Optuna
+
+_____
+
+🔟 Tu mayor problema actual
+Tu estrategia no detecta tendencias bajistas.
+En bear markets:
+dip
+dip
+dip
+dip
+y sigue comprando.
+Esto explica varios de tus malos periodos.
+
+⸻
+
+11️⃣ El filtro que más mejoraría tu sistema
+El mejor filtro para buy-the-dip es:
+📊 Trend filter
+Ejemplo simple:
+price > MA200
+Solo comprar dips cuando:
+mercado alcista
+Esto suele mejorar muchísimo.
+En muchos sistemas:
+Sharpe 0.6 → 1.2
+
+_____
+
+4️⃣ Pero hay algo que puedes mejorar mucho
+Tu sistema usa:
+dip threshold = -7%
+Pero diferentes monedas tienen dips óptimos distintos.
+Coin		Dip óptimo
+BTC			-5%
+ETH			-6%
+SOL			-7%
+DOGE		-8%
+INJ			-9%
+Si optimizas esto por activo, el rendimiento suele subir mucho.
+
+Grid search [-0.03,-0.04,-0.05,-0.06,-0.07,]
+2019-2021 → encontrar dip óptimo
+2022 → probarlo
+2023 → reoptimizar
+2024 → probar
+
+7️⃣ Algo MUY importante que casi nadie hace
+Tu sistema ahora usa:
+MAX_POSITIONS = 2
+Pero tienes 15 activos.
+Esto significa que muchas oportunidades se pierden.
+La solución típica es:
+MAX_POSITIONS = 5
+
+8️⃣ El mayor upgrade que puedes hacer
+Si haces solo una mejora, haz esta:
+Market crash filter
+No comprar dips cuando BTC está en dump fuerte.
+Ejemplo:
+if BTC_24h < -5%:
+    disable strategy
+Esto mejora muchísimo el sistema.
