@@ -8,6 +8,7 @@ Tests strategy robustness by:
 - No training needed (rule-based strategy)
 """
 
+import argparse
 import sys
 sys.path.insert(0, "..")
 
@@ -15,14 +16,11 @@ import pandas as pd
 import numpy as np
 from breakout_momentum.data_loader import fetch_ohlcv
 from strategy import add_dip_features, generate_signals
-from backtest import run_backtest, compute_metrics
+from backtest import run_backtest
 from config import (
     DEFAULT_SYMBOLS,
     TIMEFRAME,
     DAYS,
-    DIP_THRESHOLD_PCT,
-    DIP_THRESHOLD_STRONG,
-    USE_STRONG_THRESHOLD,
     INITIAL_CAPITAL,
     FEE_PCT,
     STOP_LOSS_PCT,
@@ -31,6 +29,7 @@ from config import (
     WF_TRAIN_MONTHS,
     WF_TEST_MONTHS,
     WF_STEP_MONTHS,
+    get_symbol_signal_params,
 )
 
 
@@ -67,11 +66,16 @@ def walk_forward_validation(
     print(f"  Step size:     {step_months} month(s)")
     print(f"{'='*70}\n")
 
-    # Determine threshold
-    threshold = dip_threshold if dip_threshold else (
-        DIP_THRESHOLD_STRONG if USE_STRONG_THRESHOLD else DIP_THRESHOLD_PCT
+    signal_params = get_symbol_signal_params(
+        symbol, dip_threshold_override=dip_threshold
     )
+    threshold = signal_params["dip_threshold"]
     print(f"  Dip threshold: {threshold*100:.1f}%")
+    print(
+        "  Filters: "
+        f"RSI={'on' if signal_params['use_rsi_filter'] else 'off'} "
+        f"VOL={'on' if signal_params['use_volume_filter'] else 'off'}"
+    )
 
     # 1. Download data
     print(f"\n  Downloading {symbol} data...")
@@ -113,7 +117,12 @@ def walk_forward_validation(
 
         try:
             # Generate signals
-            test_with_signals = generate_signals(test_data, dip_threshold=threshold)
+            test_with_signals = generate_signals(
+                test_data,
+                dip_threshold=threshold,
+                use_volume_filter=signal_params["use_volume_filter"],
+                use_rsi_filter=signal_params["use_rsi_filter"],
+            )
 
             # Count signals
             n_signals = (test_with_signals["signal"] == "LONG").sum()
@@ -166,7 +175,11 @@ def walk_forward_validation(
     return results
 
 
-def analyze_results(results: list, symbol: str):
+def analyze_results(
+    results: list,
+    symbol: str,
+    min_trades_for_pf: int = 5,
+):
     """Analyze walk-forward results."""
     if not results:
         print("\n  No results to analyze")
@@ -181,10 +194,11 @@ def analyze_results(results: list, symbol: str):
     print(f"\n  Summary ({len(results)} windows):")
     print(f"  ─────────────────────────────────────────")
 
-    for metric in ["total_return", "sharpe", "win_rate", "profit_factor"]:
+    for metric in ["total_return", "sharpe", "win_rate", "profit_factor", "max_dd", "num_trades"]:
         values = df_results[metric]
         print(f"\n  {metric}:")
         print(f"    Mean:   {values.mean():>8.2f}")
+        print(f"    Median: {values.median():>8.2f}")
         print(f"    Std:    {values.std():>8.2f}")
         print(f"    Min:    {values.min():>8.2f}")
         print(f"    Max:    {values.max():>8.2f}")
@@ -196,14 +210,24 @@ def analyze_results(results: list, symbol: str):
     sharpe_positive = (df_results["sharpe"] > 0).sum()
     sharpe_pct = sharpe_positive / len(results) * 100
 
-    pf_above_1 = (df_results["profit_factor"] > 1).sum()
+    enough_trades = df_results["num_trades"] >= min_trades_for_pf
+    low_trade_windows = (~enough_trades).sum()
+
+    pf_above_1 = ((df_results["profit_factor"] > 1) & enough_trades).sum()
     pf_pct = pf_above_1 / len(results) * 100
 
     print(f"\n  Consistency:")
     print(f"  ─────────────────────────────────────────")
     print(f"    Positive returns: {positive_returns}/{len(results)} ({positive_pct:.1f}%)")
     print(f"    Sharpe > 0:       {sharpe_positive}/{len(results)} ({sharpe_pct:.1f}%)")
-    print(f"    PF > 1:           {pf_above_1}/{len(results)} ({pf_pct:.1f}%)")
+    print(
+        f"    PF > 1 (trades>={min_trades_for_pf}): "
+        f"{pf_above_1}/{len(results)} ({pf_pct:.1f}%)"
+    )
+    print(
+        f"    Low-trade windows (<{min_trades_for_pf}): "
+        f"{low_trade_windows}/{len(results)}"
+    )
 
     # Stability score
     stability = (positive_pct * 0.4 + sharpe_pct * 0.3 + pf_pct * 0.3)
@@ -226,8 +250,12 @@ def analyze_results(results: list, symbol: str):
 
 def run_multi_symbol(
     symbols: list = None,
+    train_months: int = WF_TRAIN_MONTHS,
     test_months: int = WF_TEST_MONTHS,
+    step_months: int = WF_STEP_MONTHS,
+    total_days: int = DAYS,
     dip_threshold: float = None,
+    min_trades_for_pf: int = 5,
 ):
     """Run walk-forward on multiple symbols."""
     if symbols is None:
@@ -243,10 +271,17 @@ def run_multi_symbol(
         try:
             results = walk_forward_validation(
                 symbol,
+                train_months=train_months,
                 test_months=test_months,
+                step_months=step_months,
+                total_days=total_days,
                 dip_threshold=dip_threshold,
             )
-            _, stability = analyze_results(results, symbol)
+            _, stability = analyze_results(
+                results,
+                symbol,
+                min_trades_for_pf=min_trades_for_pf,
+            )
             all_scores[symbol] = stability
         except Exception as e:
             print(f"\n  Error with {symbol}: {e}")
@@ -257,7 +292,12 @@ def run_multi_symbol(
     print(f"{'='*70}\n")
 
     for symbol, score in all_scores.items():
-        status = "GOOD" if score >= 55 else "MODERATE" if score >= 40 else "POOR"
+        status = (
+            "EXCELLENT" if score >= 70
+            else "GOOD" if score >= 55
+            else "MODERATE" if score >= 40
+            else "POOR"
+        )
         print(f"  {status:<10} {symbol:<12} Stability: {score:>5.1f}/100")
 
     if all_scores:
@@ -270,9 +310,32 @@ def run_multi_symbol(
 
 
 if __name__ == "__main__":
-    # Run walk-forward on symbols with best edge
-    scores = run_multi_symbol(
-        symbols=DEFAULT_SYMBOLS,
-        test_months=2,
-        dip_threshold=-0.07,  # Stronger threshold
+    parser = argparse.ArgumentParser(
+        description="Walk-forward validation for Buy-the-Dip strategy"
+    )
+    parser.add_argument("--symbols", nargs="+", default=None,
+                        help="Symbols to evaluate (default: config list)")
+    parser.add_argument("--threshold", type=float, default=None,
+                        help="Global dip threshold override (e.g., -0.07)")
+    parser.add_argument("--train-months", type=int, default=WF_TRAIN_MONTHS,
+                        help=f"Warmup months (default: {WF_TRAIN_MONTHS})")
+    parser.add_argument("--test-months", type=int, default=WF_TEST_MONTHS,
+                        help=f"Test window months (default: {WF_TEST_MONTHS})")
+    parser.add_argument("--step-months", type=int, default=WF_STEP_MONTHS,
+                        help=f"Step months (default: {WF_STEP_MONTHS})")
+    parser.add_argument("--days", type=int, default=DAYS,
+                        help=f"Historical days to download (default: {DAYS})")
+    parser.add_argument("--min-trades", type=int, default=5,
+                        help="Min trades per window for PF consistency checks")
+
+    args = parser.parse_args()
+
+    run_multi_symbol(
+        symbols=args.symbols or DEFAULT_SYMBOLS,
+        train_months=args.train_months,
+        test_months=args.test_months,
+        step_months=args.step_months,
+        total_days=args.days,
+        dip_threshold=args.threshold,
+        min_trades_for_pf=args.min_trades,
     )

@@ -21,9 +21,6 @@ from config import (
     TIMEFRAME,
     DAYS,
     DEFAULT_SYMBOLS,
-    DIP_THRESHOLD_PCT,
-    DIP_THRESHOLD_STRONG,
-    USE_STRONG_THRESHOLD,
     TAKE_PROFIT_PCT,
     STOP_LOSS_PCT,
     HOLD_TIMEOUT_HOURS,
@@ -31,6 +28,7 @@ from config import (
     MAX_POSITIONS,
     FEE_PCT,
     INITIAL_CAPITAL,
+    get_symbol_signal_params,
 )
 from breakout_momentum.data_loader import fetch_ohlcv
 from strategy import add_dip_features, generate_signals, compute_exit_levels
@@ -39,11 +37,9 @@ from backtest import run_backtest
 STRATEGY_NAME = Path(__file__).resolve().parent.name
 
 
-def print_current_signal(df: pd.DataFrame, symbol: str):
+def print_current_signal(df: pd.DataFrame, symbol: str, threshold: float):
     """Print current signal status for a symbol."""
     last = df.iloc[-1]
-    threshold = DIP_THRESHOLD_STRONG if USE_STRONG_THRESHOLD else DIP_THRESHOLD_PCT
-
     past_ret = last.get("past_return", 0) * 100
     signal = last.get("signal", "NO TRADE")
 
@@ -110,10 +106,6 @@ def main_scan(
     if symbols is None:
         symbols = DEFAULT_SYMBOLS
 
-    threshold = dip_threshold if dip_threshold else (
-        DIP_THRESHOLD_STRONG if USE_STRONG_THRESHOLD else DIP_THRESHOLD_PCT
-    )
-
     print("=" * 70)
     print("  BUY-THE-DIP — MULTI-CRYPTO SCANNER")
     print("=" * 70)
@@ -121,7 +113,10 @@ def main_scan(
     print(f"  Symbols:       {len(symbols)}")
     print(f"  Timeframe:     {timeframe}")
     print(f"  History:       {days} days")
-    print(f"  Dip threshold: {threshold*100:.1f}%")
+    if dip_threshold is not None:
+        print(f"  Dip threshold: {dip_threshold*100:.1f}% (global override)")
+    else:
+        print("  Dip threshold: per-symbol override")
     print(f"  Take Profit:   {TAKE_PROFIT_PCT*100:.1f}%")
     print(f"  Hold timeout:  {HOLD_TIMEOUT_HOURS}h")
     print(f"  Fees:          {FEE_PCT:.2%} per side")
@@ -137,12 +132,26 @@ def main_scan(
         print('─' * 60)
 
         try:
+            signal_params = get_symbol_signal_params(
+                symbol, dip_threshold_override=dip_threshold
+            )
             df = fetch_ohlcv(symbol, timeframe, days)
             df = add_dip_features(df)
-            df = generate_signals(df, dip_threshold=threshold)
+            df = generate_signals(
+                df,
+                dip_threshold=signal_params["dip_threshold"],
+                use_volume_filter=signal_params["use_volume_filter"],
+                use_rsi_filter=signal_params["use_rsi_filter"],
+            )
 
             n_signals = (df["signal"] == "LONG").sum()
             print(f"  Signals: {n_signals}")
+            print(
+                "  Config: "
+                f"th={signal_params['dip_threshold']*100:.1f}% "
+                f"RSI={'on' if signal_params['use_rsi_filter'] else 'off'} "
+                f"VOL={'on' if signal_params['use_volume_filter'] else 'off'}"
+            )
 
             bt = run_backtest(
                 df,
@@ -161,6 +170,7 @@ def main_scan(
                 "df": df,
                 "backtest": bt,
                 "metrics": m,
+                "signal_params": signal_params,
             }
 
         except Exception as e:
@@ -179,7 +189,8 @@ def main_scan(
     signals_payload = []
 
     for symbol, data in results.items():
-        print_current_signal(data["df"], symbol)
+        threshold = data["signal_params"]["dip_threshold"]
+        print_current_signal(data["df"], symbol, threshold)
         sig = _build_signal_payload(data["df"], symbol)
         if sig:
             signals_payload.append(sig)
@@ -240,13 +251,9 @@ def main_walk_forward(
     if symbols is None:
         symbols = DEFAULT_SYMBOLS
 
-    threshold = dip_threshold if dip_threshold else (
-        DIP_THRESHOLD_STRONG if USE_STRONG_THRESHOLD else DIP_THRESHOLD_PCT
-    )
-
     scores = run_multi_symbol(
         symbols=symbols,
-        dip_threshold=threshold,
+        dip_threshold=dip_threshold,
     )
 
     return scores
@@ -261,7 +268,7 @@ if __name__ == "__main__":
     parser.add_argument("--days", type=int, default=DAYS,
                         help=f"Days of history (default: {DAYS})")
     parser.add_argument("--threshold", type=float, default=None,
-                        help="Dip threshold (e.g., -0.07 for 7%)")
+                        help="Dip threshold (e.g., -0.07 for 7%%)")
     parser.add_argument("--scan", action="store_true",
                         help="Multi-crypto scanner mode")
     parser.add_argument("--walk-forward", action="store_true",
