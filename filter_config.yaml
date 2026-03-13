@@ -24,7 +24,7 @@ filters:
   # Recommended: ENABLED for all strategies
   # ──────────────────────────────────────────────────────────────
   liquidity:
-    enabled: true
+    enabled: false
     min_volume_ratio: 0.2     # Minimum: 20% of 30-day average volume
     lookback_days: 30         # Calculate average over last 30 days
 
@@ -41,7 +41,7 @@ filters:
   # Recommended: ENABLED, especially for mean reversion
   # ──────────────────────────────────────────────────────────────
   volatility:
-    enabled: true
+    enabled: false
     max_volatility: 0.10      # Maximum: 10% realized volatility (24h)
     lookback_hours: 24        # Calculate volatility over last 24 hours
 

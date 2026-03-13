@@ -1,4 +1,0 @@
-{
-  "discord_webhook": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN",
-  "_comment": "Copy this file to monitor_config.json and replace with your actual webhook URL"
-}
