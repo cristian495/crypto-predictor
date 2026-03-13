@@ -15,13 +15,11 @@ from config import (
     DEFAULT_SYMBOLS,
     TIMEFRAME,
     DAYS,
-    DIP_THRESHOLD_PCT,
-    DIP_THRESHOLD_STRONG,
-    USE_STRONG_THRESHOLD,
     INITIAL_CAPITAL,
     FEE_PCT,
     STOP_LOSS_PCT,
     TAKE_PROFIT_PCT,
+    get_symbol_signal_params,
 )
 
 
@@ -65,14 +63,25 @@ def backtest_symbol(
     df = add_dip_features(df)
 
     # 3. Generate signals
-    threshold = dip_threshold if dip_threshold else (
-        DIP_THRESHOLD_STRONG if USE_STRONG_THRESHOLD else DIP_THRESHOLD_PCT
+    signal_params = get_symbol_signal_params(
+        symbol, dip_threshold_override=dip_threshold
     )
+    threshold = signal_params["dip_threshold"]
 
     if verbose:
         print(f"  Dip threshold: {threshold*100:.1f}%")
+        print(
+            "  Filters: "
+            f"RSI={'on' if signal_params['use_rsi_filter'] else 'off'} "
+            f"VOL={'on' if signal_params['use_volume_filter'] else 'off'}"
+        )
 
-    df = generate_signals(df, dip_threshold=threshold)
+    df = generate_signals(
+        df,
+        dip_threshold=threshold,
+        use_volume_filter=signal_params["use_volume_filter"],
+        use_rsi_filter=signal_params["use_rsi_filter"],
+    )
 
     # Count signals
     signals = (df["signal"] == "LONG").sum()
@@ -120,16 +129,15 @@ def backtest_all_symbols(
     if symbols is None:
         symbols = DEFAULT_SYMBOLS
 
-    threshold = dip_threshold if dip_threshold else (
-        DIP_THRESHOLD_STRONG if USE_STRONG_THRESHOLD else DIP_THRESHOLD_PCT
-    )
-
     print(f"\n{'='*60}")
     print(f"  BUY-THE-DIP BACKTEST - ALL SYMBOLS")
     print(f"{'='*60}")
     print(f"  Symbols:   {len(symbols)}")
     print(f"  Period:    {days} days")
-    print(f"  Threshold: {threshold*100:.1f}%")
+    if dip_threshold is not None:
+        print(f"  Threshold: {dip_threshold*100:.1f}% (global override)")
+    else:
+        print(f"  Threshold: per-symbol override")
     print(f"  SL/TP:     {STOP_LOSS_PCT*100:.1f}% / {TAKE_PROFIT_PCT*100:.1f}%")
     print(f"{'='*60}")
 

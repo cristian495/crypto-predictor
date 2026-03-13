@@ -4,14 +4,59 @@ Data ingestion: OHLCV from Binance spot + funding rates and open interest
 from Binance futures via ccxt.
 """
 
+import random
 import time
 import pandas as pd
 import ccxt
 
 
+def _is_retryable_error(exc: Exception) -> bool:
+    """Return True for transient exchange/network issues."""
+    retryable_types = (
+        ccxt.NetworkError,
+        ccxt.RequestTimeout,
+        ccxt.ExchangeNotAvailable,
+        ccxt.DDoSProtection,
+        ccxt.RateLimitExceeded,
+    )
+    if isinstance(exc, retryable_types):
+        return True
+
+    msg = str(exc).lower()
+    return any(token in msg for token in ("timeout", "timed out", "429", "503", "connection reset"))
+
+
+def _fetch_ohlcv_with_retries(
+    exchange: ccxt.Exchange,
+    symbol: str,
+    timeframe: str,
+    since: int,
+    limit: int,
+    max_retries: int,
+) -> list:
+    """Fetch one OHLCV chunk with retry/backoff for transient failures."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            return exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=limit)
+        except Exception as exc:
+            is_last = attempt == max_retries
+            if (not _is_retryable_error(exc)) or is_last:
+                raise
+
+            wait_s = (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+            print(
+                f"  Retry {attempt}/{max_retries} for {symbol} "
+                f"after {type(exc).__name__}: {exc}"
+            )
+            time.sleep(wait_s)
+
+    return []
+
+
 def fetch_ohlcv(symbol: str = "BTC/USDT",
                 timeframe: str = "1h",
-                days: int = 730) -> pd.DataFrame:
+                days: int = 730,
+                max_retries: int = 5) -> pd.DataFrame:
     """
     Download historical candles from Binance spot.
 
@@ -31,8 +76,13 @@ def fetch_ohlcv(symbol: str = "BTC/USDT",
     print(f"  Downloading {symbol} {timeframe} — last {days} days...")
 
     while True:
-        candles = exchange.fetch_ohlcv(
-            symbol, timeframe, since=since, limit=limit
+        candles = _fetch_ohlcv_with_retries(
+            exchange=exchange,
+            symbol=symbol,
+            timeframe=timeframe,
+            since=since,
+            limit=limit,
+            max_retries=max_retries,
         )
         if not candles:
             break
@@ -44,6 +94,12 @@ def fetch_ohlcv(symbol: str = "BTC/USDT",
             break
 
         time.sleep(exchange.rateLimit / 1000)
+
+    if not all_candles:
+        raise RuntimeError(
+            f"No OHLCV candles downloaded for {symbol} ({timeframe}, {days}d). "
+            "Verify symbol availability and exchange connectivity."
+        )
 
     df = pd.DataFrame(
         all_candles,

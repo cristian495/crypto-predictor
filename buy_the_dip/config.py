@@ -20,21 +20,21 @@ DAYS = 1825  # 5 years of data
 # VALIDATED symbols (passed walk-forward)
 DEFAULT_SYMBOLS = [
     # Excelentes
-    # "SUI/USDT",    # Stability 73.6/100 - EXCELLENT
-    # "ADA/USDT",    # Stability 63.8/100 - GOOD
-    # "XRP/USDT",    # Stability 56.4/100 - GOOD
-    # "INJ/USDT",    # Stability 60/100 - GOOD
+    "SUI/USDT",    # Stability 73.6/100 - EXCELLENT
+    "ADA/USDT",    # Stability 63.8/100 - GOOD
+    "XRP/USDT",    # Stability 56.4/100 - GOOD
+    "INJ/USDT",    # Stability 60/100 - GOOD
 
-    # # Buenos
-    # "LINK/USDT",   # Stability 74.1/100 - EXCELLENT
-    # "BNB/USDT",    # Stability 76.4/100 - EXCELLENT
-    # "POL/USDT",    # Stability 66.7/100 - GOOD
+    # Buenos
+    "LINK/USDT",   # Stability 74.1/100 - EXCELLENT
+    "BNB/USDT",    # Stability 76.4/100 - EXCELLENT
+    "POL/USDT",    # Stability 66.7/100 - GOOD
 
-    # # Neutrales
-    # "DOGE/USDT",   # Stability 62.7/100 - GOOD
-    # "BTC/USDT",    # Stability 43.8/100 - MODERATE
-    # "AVAX/USDT",   # Stability 55.6/100 - GOOD
-    # "SOL/USDT",   # Stability 51.5/100 - MODERATE
+    # Neutrales
+    "DOGE/USDT",   # Stability 62.7/100 - GOOD
+    "BTC/USDT",    # Stability 43.8/100 - MODERATE
+    "AVAX/USDT",   # Stability 55.6/100 - GOOD
+    "SOL/USDT",   # Stability 51.5/100 - MODERATE
 
     # Eliminar
     # "APT/USDT",    # Stability 54.7/100 - GOOD
@@ -82,6 +82,48 @@ USE_BTC_FILTER = False          # Don't require BTC alignment
 
 # ── Trading Mode ────────────────────────────────────────────
 LONG_ONLY = True                # Buy the dip = LONG only
+
+# ── Per-Symbol Signal Overrides ─────────────────────────────
+# These values come from matrix tests (matrix_runs/*_matrix.csv).
+DEFAULT_DIP_THRESHOLD = DIP_THRESHOLD_STRONG if USE_STRONG_THRESHOLD else DIP_THRESHOLD_PCT
+
+SYMBOL_SIGNAL_OVERRIDES = {
+    "SUI/USDT": {"dip_threshold": -0.07, "use_rsi_filter": True, "use_volume_filter": False},
+    "BNB/USDT": {"dip_threshold": -0.05, "use_rsi_filter": False, "use_volume_filter": True},
+    "DOGE/USDT": {"dip_threshold": -0.05, "use_rsi_filter": True, "use_volume_filter": True},
+    "ADA/USDT": {"dip_threshold": -0.06, "use_rsi_filter": False, "use_volume_filter": True},
+    "XRP/USDT": {"dip_threshold": -0.06, "use_rsi_filter": False, "use_volume_filter": True},
+    "LINK/USDT": {"dip_threshold": -0.07, "use_rsi_filter": False, "use_volume_filter": False},
+    "POL/USDT": {"dip_threshold": -0.08, "use_rsi_filter": False, "use_volume_filter": True},
+    "AVAX/USDT": {"dip_threshold": -0.08, "use_rsi_filter": False, "use_volume_filter": True},
+    "SOL/USDT": {"dip_threshold": -0.08, "use_rsi_filter": False, "use_volume_filter": True},
+    "INJ/USDT": {"dip_threshold": -0.08, "use_rsi_filter": False, "use_volume_filter": True},
+    "BTC/USDT": {"dip_threshold": -0.07, "use_rsi_filter": True, "use_volume_filter": False},
+}
+
+
+def get_symbol_signal_params(symbol: str, dip_threshold_override: float = None) -> dict:
+    """
+    Resolve signal parameters for a symbol with fallback to global defaults.
+
+    Args:
+        symbol: Trading pair (e.g., BTC/USDT)
+        dip_threshold_override: Optional CLI override applied to all symbols
+
+    Returns:
+        Dict with dip_threshold, use_volume_filter, use_rsi_filter
+    """
+    params = {
+        "dip_threshold": DEFAULT_DIP_THRESHOLD,
+        "use_volume_filter": USE_VOLUME_FILTER,
+        "use_rsi_filter": USE_RSI_FILTER,
+    }
+    params.update(SYMBOL_SIGNAL_OVERRIDES.get(symbol, {}))
+
+    if dip_threshold_override is not None:
+        params["dip_threshold"] = dip_threshold_override
+
+    return params
 
 # ── Walk-Forward Validation ─────────────────────────────────
 WF_TRAIN_MONTHS = 6
