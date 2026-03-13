@@ -15,7 +15,8 @@ windows showing positive returns for BNB.
 
 # ── Data ─────────────────────────────────────────────────────
 TIMEFRAME = "1h"
-DAYS = 1825  # 5 years of data
+DAYS = 365  # 5 years of data
+# DAYS = 1825  # 5 years of data
 
 # VALIDATED symbols (passed walk-forward)
 DEFAULT_SYMBOLS = [

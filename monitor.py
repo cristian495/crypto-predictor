@@ -20,29 +20,37 @@ import subprocess
 import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
+import time
+import select
 import requests
 import os
 import yaml
+from dotenv import load_dotenv
+
+MONITOR_SUBPROCESS_TIMEOUT_SEC = 1200
 
 
 # ── Configuration ────────────────────────────────────────────────────
 STRATEGIES = {
-    "mean_reversion": {
-        "path": "mean_reversion",
-        "symbols": ["ETH/USDT", "DOGE/USDT", "LINK/USDT", "XRP/USDT"],
-        "description": "Mean Reversion (Z-score extremes)",
-        "optimize": False,  # No optimization needed
-    },
-    "breakout_momentum": {
-        "path": "breakout_momentum",
-        "symbols": ["ETH/USDT", "BNB/USDT"],
-        "description": "Breakout Momentum (Volatility + Volume)",
-        "optimize": True  # Requires --optimize flag
-    },
+    # "mean_reversion": {
+    #     "path": "mean_reversion",
+    #     "symbols": ["ETH/USDT", "DOGE/USDT", "LINK/USDT", "XRP/USDT"],
+    #     "description": "Mean Reversion (Z-score extremes)",
+    #     "optimize": False,  # No optimization needed
+    # },
+    # "breakout_momentum": {
+    #     "path": "breakout_momentum",
+    #     "symbols": ["ETH/USDT", "BNB/USDT"],
+    #     "description": "Breakout Momentum (Volatility + Volume)",
+    #     "optimize": True  # Requires --optimize flag
+    # },
     "buy_the_dip": {
         "path": "buy_the_dip",
-        # "symbols": ["ETH/USDT", "BNB/USDT"],
         "description": "Buy the Dip",
+    },
+    "downtrend_breakout": {
+        "path": "downtrend_breakout",
+        "description": "Downtrend Breakout v1 (No-ML Futures)",
     },
     # trend_following requires 4h timeframe, slower signals
     # "trend_following": {
@@ -105,51 +113,82 @@ def check_strategy_signals(strategy_name: str, config: dict) -> list:
         List of dicts with signal info: [{"symbol": "ETH/USDT", "signal": "LONG", "prob": 0.75, ...}]
     """
     strategy_path = Path(config["path"])
-    symbols = config.get("symbols") or []
-    optimize = config.get("optimize", False)
+    timeout_sec = MONITOR_SUBPROCESS_TIMEOUT_SEC
 
     print(f"\n{'=' * 70}")
     print(f"Checking {strategy_name} ({config['description']})")
-    if symbols:
-        print(f"Symbols: {', '.join(symbols)}")
-    if optimize:
-        print(f"Optimize: enabled (finding best buy_threshold)")
+    print("Using strategy defaults from config.py")
+    print(f"Timeout: {timeout_sec}s")
     print(f"{'=' * 70}")
+
+    if not strategy_path.exists():
+        print(f"❌ Strategy path not found: {strategy_path}")
+        return []
 
     # Build command
     cmd = [
         sys.executable,
+        "-u",
         "main.py",
         "--scan"
     ]
-    if symbols:
-        cmd.extend(["--symbols", *symbols])
-
-    # Add --optimize flag if needed
-    if optimize:
-        cmd.append("--optimize")
-
-    # Add --buy-threshold for testing (forces signals with low threshold)
-    test_threshold = config.get("test_threshold")
-    if test_threshold:
-        cmd.extend(["--buy-threshold", str(test_threshold)])
-
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             signals_path = Path(tmpdir) / f"{strategy_name}_signals.json"
             cmd_with_json = cmd + ["--signals-json", str(signals_path)]
 
-            result = subprocess.run(
+            print(f"\n--- {strategy_name} live logs ---")
+            child_env = os.environ.copy()
+            child_env["PYTHONUNBUFFERED"] = "1"
+            process = subprocess.Popen(
                 cmd_with_json,
                 cwd=strategy_path,
-                capture_output=True,
-                text=True,
-                timeout=600  # 10 min max
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+                env=child_env,
             )
+            start_ts = time.monotonic()
+            last_output_ts = start_ts
+            last_heartbeat_ts = start_ts
+            heartbeat_interval_s = 5.0
+            stdout_pipe = process.stdout
+            if stdout_pipe is None:
+                process.kill()
+                print("❌ Failed to capture strategy stdout")
+                return []
+            fd = stdout_pipe.fileno()
 
-            if result.returncode != 0:
-                print(f"❌ Strategy failed with code {result.returncode}")
-                print(f"stderr: {result.stderr[:500]}")
+            while True:
+                now = time.monotonic()
+                if now - start_ts > timeout_sec:
+                    process.kill()
+                    raise subprocess.TimeoutExpired(cmd_with_json, timeout_sec)
+
+                ready, _, _ = select.select([fd], [], [], 0.5)
+                if ready:
+                    chunk = os.read(fd, 4096)
+                    if chunk:
+                        last_output_ts = time.monotonic()
+                        sys.stdout.buffer.write(chunk)
+                        sys.stdout.flush()
+                        continue
+
+                if process.poll() is not None:
+                    break
+
+                now = time.monotonic()
+                if (
+                    now - last_output_ts >= heartbeat_interval_s
+                    and now - last_heartbeat_ts >= heartbeat_interval_s
+                ):
+                    print(f"[{strategy_name}] running... {int(now - start_ts)}s elapsed", flush=True)
+                    last_heartbeat_ts = now
+
+            returncode = process.wait()
+
+            if returncode != 0:
+                print(f"❌ Strategy failed with code {returncode}")
                 return []
 
             if not signals_path.exists():
@@ -168,7 +207,7 @@ def check_strategy_signals(strategy_name: str, config: dict) -> list:
         return signals
 
     except subprocess.TimeoutExpired:
-        print(f"❌ Strategy timed out after 10 minutes")
+        print(f"❌ Strategy timed out after {timeout_sec} seconds")
         return []
     except Exception as e:
         print(f"❌ Error running strategy: {e}")
@@ -230,10 +269,17 @@ def run_monitor(webhook_url: str = None, config_file: str = None):
     """
     Run signal monitoring for all strategies.
     """
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(line_buffering=True)
+
     print(f"\n{'#' * 70}")
     print(f"# PREDICTOR SIGNAL MONITOR")
     print(f"# {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'#' * 70}\n")
+
+    load_dotenv(override=False)
 
     # Load config from file if provided
     if config_file and Path(config_file).exists():
@@ -379,4 +425,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nMonitor interrupted by user")
+        sys.exit(130)

@@ -8,6 +8,10 @@ on:
   # Permitir ejecución manual desde GitHub UI
   workflow_dispatch:
 
+concurrency:
+  group: trading-signal-monitor
+  cancel-in-progress: true
+
 jobs:
   monitor:
     runs-on: ubuntu-latest
@@ -31,7 +35,7 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
-          python monitor.py
+          python -u monitor.py 2>&1 | tee monitor.log
 
       - name: Upload logs (on failure)
         if: failure()
@@ -39,6 +43,7 @@ jobs:
         with:
           name: monitor-logs
           path: |
-            mean_reversion/*.log
-            breakout_momentum/*.log
+            monitor.log
+            buy_the_dip/*.log
+            downtrend_breakout/*.log
           retention-days: 7

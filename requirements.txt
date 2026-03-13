@@ -8,3 +8,4 @@ optuna>=3.0
 lightgbm>=4.0
 catboost>=1.2
 requests>=2.31.0
+python-dotenv>=1.0.1
