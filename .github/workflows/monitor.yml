@@ -22,15 +22,16 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements.txt
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt
 
       - name: Run signal monitor
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           PREDICTOR_SPOT_EXCHANGES: binance
         run: |
-          python3 -u monitor.py 2>&1 | tee monitor.log
+          .venv/bin/python -u monitor.py 2>&1 | tee monitor.log
 
       - name: Upload logs (on failure)
         if: failure()
