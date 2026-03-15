@@ -28,6 +28,9 @@ from config import (
     MAX_POSITIONS,
     FEE_PCT,
     INITIAL_CAPITAL,
+    MIN_VOLUME_MULT,
+    RSI_MIN,
+    RSI_MAX,
     get_symbol_signal_params,
 )
 from breakout_momentum.data_loader import fetch_ohlcv
@@ -37,11 +40,80 @@ from backtest import run_backtest
 STRATEGY_NAME = Path(__file__).resolve().parent.name
 
 
-def print_current_signal(df: pd.DataFrame, symbol: str, threshold: float):
+def _evaluate_buy_filters(last: pd.Series, signal_params: dict) -> tuple[list[tuple[str, bool, str]], str]:
+    """Evaluate current-bar entry filters and return condition lines + blocking reason."""
+    threshold = float(signal_params["dip_threshold"])
+    use_vol = bool(signal_params["use_volume_filter"])
+    use_rsi = bool(signal_params["use_rsi_filter"])
+
+    past_ret = last.get("past_return", float("nan"))
+    rel_vol = last.get("relative_volume", float("nan"))
+    rsi = last.get("rsi_14", float("nan"))
+
+    checks: list[tuple[str, bool, str]] = []
+
+    dip_ok = pd.notna(past_ret) and float(past_ret) < threshold
+    checks.append(
+        (
+            "dip_threshold",
+            bool(dip_ok),
+            (
+                f"past_return={float(past_ret)*100:+.2f}% "
+                f"< th={threshold*100:.2f}%"
+                if pd.notna(past_ret)
+                else "past_return=NaN"
+            ),
+        )
+    )
+
+    if use_vol:
+        vol_ok = pd.notna(rel_vol) and float(rel_vol) >= MIN_VOLUME_MULT
+        checks.append(
+            (
+                "volume_filter",
+                bool(vol_ok),
+                (
+                    f"relative_volume={float(rel_vol):.2f} "
+                    f">= min={MIN_VOLUME_MULT:.2f}"
+                    if pd.notna(rel_vol)
+                    else "relative_volume=NaN"
+                ),
+            )
+        )
+    else:
+        checks.append(("volume_filter", True, "disabled"))
+
+    if use_rsi:
+        rsi_ok = pd.notna(rsi) and (RSI_MIN <= float(rsi) <= RSI_MAX)
+        checks.append(
+            (
+                "rsi_filter",
+                bool(rsi_ok),
+                (
+                    f"rsi_14={float(rsi):.2f} in [{RSI_MIN}, {RSI_MAX}]"
+                    if pd.notna(rsi)
+                    else "rsi_14=NaN"
+                ),
+            )
+        )
+    else:
+        checks.append(("rsi_filter", True, "disabled"))
+
+    blocking = "none"
+    for name, ok, detail in checks:
+        if not ok:
+            blocking = f"{name} ({detail})"
+            break
+
+    return checks, blocking
+
+
+def print_current_signal(df: pd.DataFrame, symbol: str, threshold: float, signal_params: dict):
     """Print current signal status for a symbol."""
     last = df.iloc[-1]
     past_ret = last.get("past_return", 0) * 100
     signal = last.get("signal", "NO TRADE")
+    checks, blocking = _evaluate_buy_filters(last, signal_params)
 
     if signal == "LONG":
         levels = compute_exit_levels(last["close"], TAKE_PROFIT_PCT, STOP_LOSS_PCT)
@@ -52,6 +124,13 @@ def print_current_signal(df: pd.DataFrame, symbol: str, threshold: float):
         print(f"               Timeout:  {HOLD_TIMEOUT_HOURS}h")
     else:
         print(f"  {symbol:<12} NO SIGNAL  (24h: {past_ret:+.2f}%, need <{threshold*100:.0f}%)")
+
+    print("               Conditions:")
+    for name, ok, detail in checks:
+        state = "PASS" if ok else "FAIL"
+        print(f"                 - {name:<14} {state:<4} | {detail}")
+    if signal != "LONG":
+        print(f"               Blocked by: {blocking}")
 
 
 def _build_signal_payload(df: pd.DataFrame, symbol: str) -> dict | None:
@@ -190,7 +269,7 @@ def main_scan(
 
     for symbol, data in results.items():
         threshold = data["signal_params"]["dip_threshold"]
-        print_current_signal(data["df"], symbol, threshold)
+        print_current_signal(data["df"], symbol, threshold, data["signal_params"])
         sig = _build_signal_payload(data["df"], symbol)
         if sig:
             signals_payload.append(sig)

@@ -39,7 +39,12 @@ from config import (
     get_symbol_params,
 )
 from matrix_test import run_matrix_search
-from strategy import add_features, generate_signals
+from strategy import (
+    _sell_rip_confidence,
+    _signal_confidence,
+    add_features,
+    generate_signals,
+)
 from walk_forward import run_multi_symbol
 
 STRATEGY_NAME = Path(__file__).resolve().parent.name
@@ -84,12 +89,241 @@ def _build_signal_payload(df: pd.DataFrame, symbol: str) -> dict | None:
     }
 
 
-def print_current_signal(df: pd.DataFrame, symbol: str, symbol_params: dict | None = None):
+def _evaluate_downtrend_conditions(
+    df: pd.DataFrame, symbol_params: dict, mode: str
+) -> tuple[list[tuple[str, bool, str]], str]:
+    """Evaluate current-bar rules and return condition lines + blocking reason."""
+    if df.empty:
+        return [("data", False, "empty dataframe")], "data (empty dataframe)"
+
+    row = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else None
+
+    checks: list[tuple[str, bool, str]] = []
+
+    use_btc_bear_filter = bool(symbol_params.get("use_btc_bear_filter", False))
+    use_btc_regime_switch = bool(symbol_params.get("use_btc_regime_switch", False))
+    enable_sell_the_rip = bool(symbol_params.get("enable_sell_the_rip", False))
+
+    short_ret24_threshold = float(symbol_params["short_ret24_threshold"])
+    short_ret6_threshold = float(symbol_params["short_ret6_threshold"])
+    adx_min = float(symbol_params["adx_min"])
+    atr_rank_max = float(symbol_params["atr_pct_rank_max"])
+    rel_vol_min = float(symbol_params["relative_volume_min"])
+    min_prob = float(symbol_params.get("min_probability", 0.50))
+
+    ret_24h = row.get("ret_24h", np.nan)
+    ret_6h = row.get("ret_6h", np.nan)
+    close = row.get("close", np.nan)
+    donchian_low = row.get("donchian_low", np.nan)
+    donchian_high = row.get("donchian_high", np.nan)
+    adx14 = row.get("adx14", np.nan)
+    atr_rank = row.get("atr_pct_rank_90d", np.nan)
+    rel_vol = row.get("relative_volume_20", np.nan)
+    bearish = bool(row.get("regime_bearish", False))
+    bullish = bool(row.get("regime_bullish", False))
+
+    # Short breakdown conditions
+    checks.append(("regime_bearish", bearish, f"regime_bearish={bearish}"))
+
+    c_break_low = pd.notna(close) and pd.notna(donchian_low) and float(close) < float(donchian_low)
+    checks.append(
+        (
+            "break_donchian_low",
+            bool(c_break_low),
+            (
+                f"close={float(close):.6f} < donchian_low={float(donchian_low):.6f}"
+                if pd.notna(close) and pd.notna(donchian_low)
+                else "close/donchian_low NaN"
+            ),
+        )
+    )
+
+    c_ret24 = pd.notna(ret_24h) and float(ret_24h) <= short_ret24_threshold
+    checks.append(
+        (
+            "ret_24h_short",
+            bool(c_ret24),
+            (
+                f"ret_24h={float(ret_24h)*100:+.2f}% <= {short_ret24_threshold*100:+.2f}%"
+                if pd.notna(ret_24h)
+                else "ret_24h=NaN"
+            ),
+        )
+    )
+
+    c_ret6 = pd.notna(ret_6h) and float(ret_6h) <= short_ret6_threshold
+    checks.append(
+        (
+            "ret_6h_short",
+            bool(c_ret6),
+            (
+                f"ret_6h={float(ret_6h)*100:+.2f}% <= {short_ret6_threshold*100:+.2f}%"
+                if pd.notna(ret_6h)
+                else "ret_6h=NaN"
+            ),
+        )
+    )
+
+    c_adx = pd.notna(adx14) and float(adx14) >= adx_min
+    checks.append(
+        (
+            "adx_min",
+            bool(c_adx),
+            f"adx14={float(adx14):.2f} >= {adx_min:.2f}" if pd.notna(adx14) else "adx14=NaN",
+        )
+    )
+
+    c_atr_rank = pd.notna(atr_rank) and float(atr_rank) <= atr_rank_max
+    checks.append(
+        (
+            "atr_rank_max",
+            bool(c_atr_rank),
+            (
+                f"atr_rank={float(atr_rank):.2f} <= {atr_rank_max:.2f}"
+                if pd.notna(atr_rank)
+                else "atr_rank=NaN"
+            ),
+        )
+    )
+
+    c_rel_vol = pd.notna(rel_vol) and float(rel_vol) >= rel_vol_min
+    checks.append(
+        (
+            "relative_volume",
+            bool(c_rel_vol),
+            (
+                f"rel_vol={float(rel_vol):.2f} >= {rel_vol_min:.2f}"
+                if pd.notna(rel_vol)
+                else "rel_vol=NaN"
+            ),
+        )
+    )
+
+    short_breakdown_ok = all([bearish, c_break_low, c_ret24, c_ret6, c_adx, c_atr_rank, c_rel_vol])
+
+    # BTC macro filters
+    macro_short_ok = True
+    if use_btc_regime_switch:
+        btc_ret24 = row.get("btc_ret_24h", np.nan)
+        btc_ret7d = row.get("btc_ret_7d", np.nan)
+        btc_regime_bearish = bool(row.get("btc_regime_bearish", False))
+        btc_ret24_max = float(symbol_params.get("btc_ret24_max", 0.0))
+        btc_ret7d_max = float(symbol_params.get("btc_ret7d_max", 0.0))
+
+        macro_short_ok = (
+            pd.notna(btc_ret24)
+            and pd.notna(btc_ret7d)
+            and btc_regime_bearish
+            and float(btc_ret24) <= btc_ret24_max
+            and float(btc_ret7d) <= btc_ret7d_max
+        )
+        detail = (
+            f"btc_regime_bearish={btc_regime_bearish}, "
+            f"btc24={float(btc_ret24)*100:+.2f}%<={btc_ret24_max*100:+.2f}%, "
+            f"btc7d={float(btc_ret7d)*100:+.2f}%<={btc_ret7d_max*100:+.2f}%"
+            if pd.notna(btc_ret24) and pd.notna(btc_ret7d)
+            else "btc_ret_24h/btc_ret_7d NaN"
+        )
+        checks.append(("btc_macro_short", bool(macro_short_ok), detail))
+    elif use_btc_bear_filter:
+        btc_ret24 = row.get("btc_ret_24h", np.nan)
+        btc_regime_bearish = bool(row.get("btc_regime_bearish", False))
+        btc_ret24_max = float(symbol_params.get("btc_ret24_max", 0.0))
+        macro_short_ok = (
+            pd.notna(btc_ret24)
+            and btc_regime_bearish
+            and float(btc_ret24) <= btc_ret24_max
+        )
+        detail = (
+            f"btc_regime_bearish={btc_regime_bearish}, btc24={float(btc_ret24)*100:+.2f}%<={btc_ret24_max*100:+.2f}%"
+            if pd.notna(btc_ret24)
+            else "btc_ret_24h=NaN"
+        )
+        checks.append(("btc_macro_short", bool(macro_short_ok), detail))
+    else:
+        checks.append(("btc_macro_short", True, "disabled"))
+
+    # Sell-the-rip conditions
+    sell_rip_ok = False
+    if enable_sell_the_rip and prev is not None and bearish:
+        prev_close = prev.get("close", np.nan)
+        prev_ema50 = prev.get("ema50", np.nan)
+        ema50 = row.get("ema50", np.nan)
+        prev_ret6h = prev.get("ret_6h", np.nan)
+        sell_rip_ret6h_min = float(symbol_params.get("sell_rip_ret6h_min", 0.02))
+        sell_rip_ret24h_max = float(symbol_params.get("sell_rip_ret24h_max", 0.03))
+
+        prev_above_ema50 = pd.notna(prev_close) and pd.notna(prev_ema50) and float(prev_close) > float(prev_ema50)
+        cross_back_below_ema50 = prev_above_ema50 and pd.notna(close) and pd.notna(ema50) and float(close) <= float(ema50)
+        ret6h_rip = max(
+            float(ret_6h) if pd.notna(ret_6h) else float("-inf"),
+            float(prev_ret6h) if pd.notna(prev_ret6h) else float("-inf"),
+        )
+        c_rip6 = ret6h_rip >= sell_rip_ret6h_min
+        c_rip24 = pd.notna(ret_24h) and float(ret_24h) <= sell_rip_ret24h_max
+
+        sell_rip_ok = all([cross_back_below_ema50, c_rip6, c_rip24, c_adx, c_atr_rank, c_rel_vol])
+        checks.append(
+            (
+                "sell_the_rip",
+                bool(sell_rip_ok),
+                (
+                    f"cross_ema50={cross_back_below_ema50}, ret6h_rip={ret6h_rip*100:+.2f}%>={sell_rip_ret6h_min*100:.2f}%, "
+                    f"ret24={float(ret_24h)*100:+.2f}%<={sell_rip_ret24h_max*100:.2f}%"
+                    if pd.notna(ret_24h)
+                    else "ret_24h=NaN or missing prev"
+                ),
+            )
+        )
+    elif enable_sell_the_rip:
+        checks.append(("sell_the_rip", False, "not enough data or bearish regime=False"))
+    else:
+        checks.append(("sell_the_rip", True, "disabled"))
+
+    short_ok = macro_short_ok and (short_breakdown_ok or sell_rip_ok)
+    checks.append(("short_setup", bool(short_ok), f"macro_short_ok={macro_short_ok}, breakdown={short_breakdown_ok}, sell_rip={sell_rip_ok}"))
+
+    if short_ok:
+        try:
+            confidence = (
+                _sell_rip_confidence(row, symbol_params)
+                if sell_rip_ok and not short_breakdown_ok
+                else _signal_confidence(row, symbol_params, direction=-1)
+            )
+            prob_ok = confidence >= min_prob
+            checks.append(("min_probability", bool(prob_ok), f"prob={confidence:.3f} >= min={min_prob:.3f}"))
+        except Exception as exc:
+            checks.append(("min_probability", False, f"error computing confidence: {exc}"))
+            prob_ok = False
+        short_ok = short_ok and prob_ok
+
+    if mode == "long_short":
+        long_ret24_min = float(symbol_params["long_ret24_min"])
+        long_ret6_min = float(symbol_params["long_ret6_min"])
+        c_long_break = pd.notna(close) and pd.notna(donchian_high) and float(close) > float(donchian_high)
+        c_long_ret24 = pd.notna(ret_24h) and float(ret_24h) >= long_ret24_min
+        c_long_ret6 = pd.notna(ret_6h) and float(ret_6h) >= long_ret6_min
+        long_ok = all([bullish, c_long_break, c_long_ret24, c_long_ret6, c_adx, c_atr_rank, c_rel_vol])
+        checks.append(("regime_bullish", bool(bullish), f"regime_bullish={bullish}"))
+        checks.append(("long_setup", bool(long_ok), f"close>donchian_high={c_long_break}, ret24_ok={c_long_ret24}, ret6_ok={c_long_ret6}"))
+
+    blocking = "none"
+    for name, ok, detail in checks:
+        if not ok:
+            blocking = f"{name} ({detail})"
+            break
+
+    return checks, blocking
+
+
+def print_current_signal(df: pd.DataFrame, symbol: str, symbol_params: dict | None = None, mode: str = MODE_DEFAULT):
     """Print current signal status for a symbol."""
     params = symbol_params or {}
     last = df.iloc[-1]
     signal = last.get("signal", "NO TRADE")
     ret24 = last.get("ret_24h", 0) * 100
+    checks, blocking = _evaluate_downtrend_conditions(df, params, mode=mode)
 
     if signal in ["LONG", "SHORT"]:
         direction = 1 if signal == "LONG" else -1
@@ -112,6 +346,12 @@ def print_current_signal(df: pd.DataFrame, symbol: str, symbol_params: dict | No
             print(f"  {symbol:<12} {signal} SIGNAL  (24h move: {ret24:+.2f}%)")
     else:
         print(f"  {symbol:<12} NO SIGNAL  (24h move: {ret24:+.2f}%)")
+    print("               Conditions:")
+    for name, ok, detail in checks:
+        state = "PASS" if ok else "FAIL"
+        print(f"                 - {name:<16} {state:<4} | {detail}")
+    if signal not in ["LONG", "SHORT"]:
+        print(f"               Blocked by: {blocking}")
 
 
 def main_scan(
@@ -236,7 +476,7 @@ def main_scan(
     payload = []
     for symbol, data in results.items():
         symbol_params = _resolve_symbol_params(symbol, global_param_overrides)
-        print_current_signal(data["df"], symbol, symbol_params=symbol_params)
+        print_current_signal(data["df"], symbol, symbol_params=symbol_params, mode=mode)
         sig = _build_signal_payload(data["df"], symbol)
         if sig:
             payload.append(sig)
