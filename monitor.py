@@ -50,7 +50,11 @@ STRATEGIES = {
     },
     "downtrend_breakout": {
         "path": "downtrend_breakout",
-        "description": "Downtrend Breakout v1 (No-ML Futures)",
+        "description": "Downtrend Breakout v1",
+    },
+    "sell_the_rip": {
+        "path": "sell_the_rip",
+        "description": "Sell the Rip",
     },
     # trend_following requires 4h timeframe, slower signals
     # "trend_following": {
@@ -77,7 +81,7 @@ def send_discord_notification(webhook_url: str, message: str, color: int = 0x00f
         return
 
     embed = {
-        "title": "🤖 Trading Signal Detected",
+        "title": "🤖 Trading Signal Scan",
         "description": message,
         "color": color,
         "timestamp": datetime.now(timezone.utc).isoformat(),
